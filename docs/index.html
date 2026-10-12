@@ -105,7 +105,7 @@
         <button id="reviewBtn" class="btn" onclick="submitReview()">Submit for AI Review</button>
       </div>
       <div id="submitMsg" class="msg"></div>
-      <p style="color:var(--muted);font-size:12px;margin-top:12px">Each validator independently fetches your artifact and rates it. The rating is credited to your connected wallet. Consensus must agree before anything is recorded — a leader that inflates the score is rejected.</p>
+      <p style="color:var(--muted);font-size:12px;margin-top:12px">Each validator independently fetches your artifact and rates it, and the rating is credited to the reviewing account on-chain. Consensus must agree before anything is recorded — a leader that inflates the score is rejected.</p>
     </div>
   </div>
 
@@ -218,6 +218,13 @@ function disconnect() {
   b.onclick = window.connectWallet;
 }
 
+// The write path goes through the relay backend: a GenLayer write is a rollup
+// transaction that must be signed by a key the client holds, and an injected
+// browser wallet cannot produce that signature. The relay holds the signer.
+const RELAY = (location.protocol === 'https:' && location.hostname.endsWith('github.io')
+  ? (window.__RELAY_URL__ || 'https://proof-of-contribution-relay.onrender.com')
+  : (window.__RELAY_URL__ || 'http://localhost:3000'));
+
 async function readCall(fn, args) {
   const v = await reader.readContract({ address: CONTRACT, abi: ABI, functionName: fn, args });
   return typeof v === 'string' ? JSON.parse(v) : v;
@@ -225,11 +232,20 @@ async function readCall(fn, args) {
 
 async function loadStats() {
   try {
-    const d = await readCall('total_developers', []);
-    const r = await readCall('total_reviews', []);
-    document.getElementById('stDevs').textContent = String(d);
-    document.getElementById('stRevs').textContent = String(r);
-  } catch (e) { /* RPC lag */ }
+    const s = await fetch(RELAY + '/api/stats').then(r => r.json());
+    if (s && s.developers) {
+      document.getElementById('stDevs').textContent = s.developers;
+      document.getElementById('stRevs').textContent = s.reviews;
+    }
+  } catch (e) {
+    // fall back to reading the chain directly
+    try {
+      const d = await readCall('total_developers', []);
+      const r = await readCall('total_reviews', []);
+      document.getElementById('stDevs').textContent = String(d);
+      document.getElementById('stRevs').textContent = String(r);
+    } catch (e2) { /* RPC lag */ }
+  }
 }
 
 async function loadProfile() {
@@ -258,27 +274,29 @@ window.submitReview = async function() {
   const id = document.getElementById('inId').value.trim();
   const rubric = document.getElementById('inRubric').value;
   if (!url || !id) return showMsg('submitMsg', 'Artifact URL and Review ID are required.', 'err');
-  if (!walletAddress) return showMsg('submitMsg', 'Connect your wallet first.', 'err');
-  if (!walletClient) return showMsg('submitMsg', 'This build is read-only: writes need a local signer.', 'err');
   const btn = document.getElementById('reviewBtn');
   btn.disabled = true; btn.textContent = 'Submitting…';
-  showMsg('submitMsg', 'Submitting — validators are independently fetching and rating your work. This takes a minute.', 'info');
+  showMsg('submitMsg', 'Submitted — validators are independently fetching and rating the work. Consensus takes about a minute.', 'info');
   try {
-    const hash = await walletClient.writeContract({
-      address: CONTRACT, abi: ABI, functionName: 'review_contribution',
-      args: [id, url, rubric], value: 0n, fees: FEES,
+    const res = await fetch(RELAY + '/api/review', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ review_id: id, artifact_url: url, rubric }),
     });
-    showMsg('submitMsg', 'Submitted. Waiting for consensus…', 'info');
-    await walletClient.waitForTransactionReceipt({ hash, waitUntil: 'finalized', retries: 200 });
-    const rev = await readCall('get_review', [id]);
-    if (rev && rev.exists) {
-      showMsg('submitMsg', 'Reviewed! Rating: ' + rev.rating + '/5. Your profile has been updated.', 'ok');
-      loadStats(); loadProfile();
+    const data = await res.json();
+    if (!res.ok) {
+      return showMsg('submitMsg', data.error || 'Submission failed.', 'err');
+    }
+    if (data.committed && data.review) {
+      showMsg('submitMsg', 'Reviewed! Rating: ' + data.review.rating +
+        '/5 under validator consensus. Recorded on-chain.', 'ok');
+      loadStats();
     } else {
-      showMsg('submitMsg', 'Submitted, but no rating was recorded yet. Check back shortly.', 'info');
+      showMsg('submitMsg', 'Transaction sent (' + (data.resultName || 'pending') +
+        ') but no rating was committed — validators did not reach consensus. Try again.', 'info');
     }
   } catch (e) {
-    showMsg('submitMsg', 'Failed: ' + (e.shortMessage || e.message || e), 'err');
+    showMsg('submitMsg', 'Could not reach the relay: ' + (e.message || e), 'err');
   } finally {
     btn.disabled = false; btn.textContent = 'Submit for AI Review';
   }
