@@ -173,7 +173,7 @@ const ABI = [
 // Reads need no wallet — a reader client works for view calls.
 const reader = createClient({ chain: chains.testnetBradbury });
 let walletClient = null;
-let account = null;
+let walletAddress = null;
 
 window.showTab = function(name, ev) {
   document.querySelectorAll('.pane').forEach(p => p.classList.remove('active'));
@@ -184,18 +184,26 @@ window.showTab = function(name, ev) {
 };
 
 window.connectWallet = async function() {
-  if (account) { disconnect(); return; }
+  if (walletAddress) { disconnect(); return; }
   if (!window.ethereum) {
     return showMsg('submitMsg', 'No wallet found. Open this page in MetaMask\'s browser, or install MetaMask.', 'err');
   }
   try {
     const [addr] = await window.ethereum.request({ method: 'eth_requestAccounts' });
-    account = createAccount(window.__DEPLOY_KEY__ ? window.__DEPLOY_KEY__ : undefined) || null;
-    // For writes we sign with the injected provider via the wallet client.
-    walletClient = createClient({ chain: chains.testnetBradbury });
+    walletAddress = addr;
+    // Reads work with a wallet-less reader client. WRITES need a local signer:
+    // a GenLayer write is a rollup transaction that must be signed by a key the
+    // client holds, and an injected browser provider cannot produce it. So the
+    // write path requires the connected wallet's key to be supplied out of band
+    // (see window.__SIGNER_KEY__), which is only present in a trusted local
+    // deployment — never in a public build.
+    if (window.__SIGNER_KEY__) {
+      walletClient = createClient({ chain: chains.testnetBradbury, account: createAccount(window.__SIGNER_KEY__) });
+    }
     document.getElementById('connectBtn').textContent = addr.slice(0, 6) + '…' + addr.slice(-4);
     document.getElementById('connectBtn').onclick = disconnect;
-    showMsg('submitMsg', 'Wallet connected: ' + addr, 'ok');
+    showMsg('submitMsg', 'Wallet connected: ' + addr +
+      (window.__SIGNER_KEY__ ? '' : ' (read-only: no local signer for writes)'), 'ok');
     loadStats();
     loadProfile();
   } catch (e) {
@@ -204,7 +212,7 @@ window.connectWallet = async function() {
 };
 
 function disconnect() {
-  account = null; walletClient = null;
+  walletAddress = null; walletClient = null;
   const b = document.getElementById('connectBtn');
   b.textContent = 'Connect Wallet';
   b.onclick = window.connectWallet;
@@ -225,8 +233,8 @@ async function loadStats() {
 }
 
 async function loadProfile() {
-  if (!account) { document.getElementById('profileBody').innerHTML = '<div class="empty">Connect a wallet to view your reputation.</div>'; return; }
-  const addr = account.address;
+  if (!walletAddress) { document.getElementById('profileBody').innerHTML = '<div class="empty">Connect a wallet to view your reputation.</div>'; return; }
+  const addr = walletAddress;
   try {
     const rep = await readCall('get_reputation', [addr]);
     if (!rep || !rep.exists) {
@@ -250,7 +258,8 @@ window.submitReview = async function() {
   const id = document.getElementById('inId').value.trim();
   const rubric = document.getElementById('inRubric').value;
   if (!url || !id) return showMsg('submitMsg', 'Artifact URL and Review ID are required.', 'err');
-  if (!account) return showMsg('submitMsg', 'Connect your wallet first.', 'err');
+  if (!walletAddress) return showMsg('submitMsg', 'Connect your wallet first.', 'err');
+  if (!walletClient) return showMsg('submitMsg', 'This build is read-only: writes need a local signer.', 'err');
   const btn = document.getElementById('reviewBtn');
   btn.disabled = true; btn.textContent = 'Submitting…';
   showMsg('submitMsg', 'Submitting — validators are independently fetching and rating your work. This takes a minute.', 'info');
