@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ProofOfContribution — AI-Verified Developer Reputation</title>
+<style>
+  :root{
+    --bg:#0b0e14; --card:#141922; --card2:#1a2130; --line:#232c3d;
+    --txt:#e8edf5; --muted:#8b97ad; --accent:#7c5cff; --accent2:#00d4aa;
+    --warn:#ffb020; --bad:#ff5c7a;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--txt);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;line-height:1.5;min-height:100vh}
+  a{color:var(--accent2)}
+  .wrap{max-width:980px;margin:0 auto;padding:24px 18px 60px}
+  header{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:8px}
+  h1{font-size:22px;font-weight:700;letter-spacing:-.3px}
+  h1 span{color:var(--accent)}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:22px}
+  button{font-family:inherit;cursor:pointer;border:none;border-radius:10px;font-weight:600;transition:.15s}
+  .btn{background:var(--accent);color:#fff;padding:10px 18px;font-size:14px}
+  .btn:hover{filter:brightness(1.12)}
+  .btn:disabled{opacity:.45;cursor:not-allowed}
+  .btn-ghost{background:var(--card2);color:var(--txt);border:1px solid var(--line);padding:9px 16px;font-size:13px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:16px}
+  .card h2{font-size:14px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin-bottom:14px}
+  label{display:block;font-size:12px;color:var(--muted);margin:10px 0 5px;font-weight:600}
+  input,textarea,select{width:100%;background:var(--bg);border:1px solid var(--line);color:var(--txt);border-radius:9px;padding:10px 12px;font-size:14px;font-family:inherit}
+  input:focus,textarea:focus,select:focus{outline:none;border-color:var(--accent)}
+  textarea{resize:vertical;min-height:64px}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  @media(max-width:640px){.row{grid-template-columns:1fr}}
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px}
+  @media(max-width:640px){.stats{grid-template-columns:repeat(2,1fr)}}
+  .stat{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;text-align:center}
+  .stat .v{font-size:22px;font-weight:700;color:var(--accent2)}
+  .stat .l{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-top:3px}
+  .badge{display:inline-block;padding:4px 11px;border-radius:20px;font-size:11px;font-weight:700;letter-spacing:.5px}
+  .r-LEGEND{background:#7c5cff22;color:#a58cff;border:1px solid #7c5cff55}
+  .r-EXPERT{background:#00d4aa22;color:#00d4aa;border:1px solid #00d4aa55}
+  .r-CONTRIBUTOR{background:#ffb02022;color:#ffb020;border:1px solid #ffb02055}
+  .r-NOVICE{background:#8b97ad22;color:#8b97ad;border:1px solid #8b97ad55}
+  .r-NEWCOMER{background:#232c3d;color:#8b97ad;border:1px solid var(--line)}
+  .msg{padding:11px 14px;border-radius:9px;font-size:13px;margin-top:12px;display:none}
+  .msg.ok{display:block;background:#00d4aa15;color:#00d4aa;border:1px solid #00d4aa33}
+  .msg.err{display:block;background:#ff5c7a15;color:#ff9aab;border:1px solid #ff5c7a33}
+  .msg.info{display:block;background:#7c5cff15;color:#a58cff;border:1px solid #7c5cff33}
+  .review{background:var(--card2);border:1px solid var(--line);border-radius:11px;padding:13px;margin-bottom:10px}
+  .review .top{display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap}
+  .review .id{font-weight:700;font-size:14px}
+  .review .meta{color:var(--muted);font-size:12px;margin-top:5px;word-break:break-all}
+  .rating{font-size:20px;font-weight:800;color:var(--accent2)}
+  .empty{color:var(--muted);font-size:13px;text-align:center;padding:22px}
+  .addr{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;color:var(--muted);word-break:break-all}
+  .tabs{display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap}
+  .tab{background:var(--card2);color:var(--muted);border:1px solid var(--line);padding:8px 15px;font-size:13px;border-radius:9px}
+  .tab.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .pane{display:none}.pane.active{display:block}
+  footer{margin-top:26px;text-align:center;color:var(--muted);font-size:11px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Proof<span>Of</span>Contribution</h1>
+    <button id="connectBtn" class="btn" onclick="connectWallet()">Connect Wallet</button>
+  </header>
+  <p class="sub">AI-verified developer reputation. Submit a docs link or PR; validator committee rates it against your rubric; the rating updates your permanent on-chain rank.</p>
+
+  <div class="stats">
+    <div class="stat"><div class="v" id="stDevs">–</div><div class="l">Developers</div></div>
+    <div class="stat"><div class="v" id="stRevs">–</div><div class="l">Reviews</div></div>
+    <div class="stat"><div class="v" id="myScore">–</div><div class="l">My Score</div></div>
+    <div class="stat"><div class="v" id="myRank">–</div><div class="l">My Rank</div></div>
+  </div>
+
+  <div class="tabs">
+    <button class="tab active" onclick="showTab('submit',event)">Submit Work</button>
+    <button class="tab" onclick="showTab('profile',event)">My Profile</button>
+    <button class="tab" onclick="showTab('lookup',event)">Look Up Dev</button>
+  </div>
+
+  <!-- SUBMIT -->
+  <div class="pane active" id="pane-submit">
+    <div class="card">
+      <h2>Submit a contribution for review</h2>
+      <label>Artifact URL (public markdown docs or pull request)</label>
+      <input id="inUrl" type="text" placeholder="https://example.com/my-docs.md">
+      <div class="row">
+        <div>
+          <label>Review ID (unique label)</label>
+          <input id="inId" type="text" placeholder="my-doc-2026">
+        </div>
+        <div>
+          <label>Rubric</label>
+          <select id="inRubric">
+            <option value="Rate depth, clarity, and quality from 1 (poor) to 5 (excellent).">General quality</option>
+            <option value="Rate technical depth, accuracy, and completeness from 1 (poor) to 5 (excellent).">Technical depth</option>
+            <option value="Rate clarity, structure, and spelling from 1 (poor) to 5 (excellent).">Clarity &amp; spelling</option>
+          </select>
+        </div>
+      </div>
+      <div style="margin-top:16px">
+        <button id="reviewBtn" class="btn" onclick="submitReview()">Submit for AI Review</button>
+      </div>
+      <div id="submitMsg" class="msg"></div>
+      <p style="color:var(--muted);font-size:12px;margin-top:12px">Each validator independently fetches your artifact and rates it. The rating is credited to your connected wallet. Consensus must agree before anything is recorded — a leader that inflates the score is rejected.</p>
+    </div>
+  </div>
+
+  <!-- PROFILE -->
+  <div class="pane" id="pane-profile">
+    <div class="card">
+      <h2>My reputation</h2>
+      <div id="profileBody"><div class="empty">Connect a wallet to view your reputation.</div></div>
+      <div id="profileMsg" class="msg"></div>
+    </div>
+    <div class="card">
+      <h2>My reviews</h2>
+      <div id="myReviews"><div class="empty">No reviews loaded.</div></div>
+    </div>
+  </div>
+
+  <!-- LOOKUP -->
+  <div class="pane" id="pane-lookup">
+    <div class="card">
+      <h2>Look up a developer</h2>
+      <label>Wallet address</label>
+      <input id="inLookup" type="text" placeholder="0x...">
+      <div style="margin-top:14px">
+        <button class="btn-ghost" onclick="lookupDev()">Look Up</button>
+      </div>
+      <div id="lookupMsg" class="msg"></div>
+    </div>
+    <div class="card" id="lookupCard" style="display:none">
+      <h2>Reputation</h2>
+      <div id="lookupBody"></div>
+    </div>
+  </div>
+
+  <footer>
+    Contract <span class="addr" id="contractAddr"></span><br>
+    GenLayer Bradbury Testnet · chain 4221
+  </footer>
+</div>
+
+<script src="./rpc-fix.js"></script>
+<script type="importmap">
+{ "imports": { "genlayer-js": "https://cdn.jsdelivr.net/npm/genlayer-js@1.1.8/+esm" } }
+</script>
+<script type="module">
+import { createClient, createAccount, chains } from 'genlayer-js';
+
+const CONTRACT = '0x218E6256B0ED02F0Bb5155E5Ae93219168c4c32f';
+const FEES = { feeValue: '100000000000010352' };
+const RPC = 'https://rpc-bradbury.genlayer.com';
+
+const ABI = [
+  { type: 'function', name: 'review_contribution', stateMutability: 'nonpayable',
+    inputs: [{ name: 'review_id', type: 'string' }, { name: 'artifact_url', type: 'string' },
+              { name: 'rubric', type: 'string' }], outputs: [{ name: '', type: 'string' }] },
+  { type: 'function', name: 'get_reputation', stateMutability: 'view',
+    inputs: [{ name: 'dev', type: 'string' }], outputs: [{ name: '', type: 'any' }] },
+  { type: 'function', name: 'get_review', stateMutability: 'view',
+    inputs: [{ name: 'review_id', type: 'string' }], outputs: [{ name: '', type: 'any' }] },
+  { type: 'function', name: 'total_developers', stateMutability: 'view',
+    inputs: [], outputs: [{ name: '', type: 'uint256' }] },
+  { type: 'function', name: 'total_reviews', stateMutability: 'view',
+    inputs: [], outputs: [{ name: '', type: 'uint256' }] },
+];
+
+// Reads need no wallet — a reader client works for view calls.
+const reader = createClient({ chain: chains.testnetBradbury });
+let walletClient = null;
+let account = null;
+
+window.showTab = function(name, ev) {
+  document.querySelectorAll('.pane').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('pane-' + name).classList.add('active');
+  if (ev && ev.target) ev.target.classList.add('active');
+  if (name === 'profile') loadProfile();
+};
+
+window.connectWallet = async function() {
+  if (account) { disconnect(); return; }
+  if (!window.ethereum) {
+    return showMsg('submitMsg', 'No wallet found. Open this page in MetaMask\'s browser, or install MetaMask.', 'err');
+  }
+  try {
+    const [addr] = await window.ethereum.request({ method: 'eth_requestAccounts' });
+    account = createAccount(window.__DEPLOY_KEY__ ? window.__DEPLOY_KEY__ : undefined) || null;
+    // For writes we sign with the injected provider via the wallet client.
+    walletClient = createClient({ chain: chains.testnetBradbury });
+    document.getElementById('connectBtn').textContent = addr.slice(0, 6) + '…' + addr.slice(-4);
+    document.getElementById('connectBtn').onclick = disconnect;
+    showMsg('submitMsg', 'Wallet connected: ' + addr, 'ok');
+    loadStats();
+    loadProfile();
+  } catch (e) {
+    showMsg('submitMsg', 'Connection failed: ' + (e.shortMessage || e.message || e), 'err');
+  }
+};
+
+function disconnect() {
+  account = null; walletClient = null;
+  const b = document.getElementById('connectBtn');
+  b.textContent = 'Connect Wallet';
+  b.onclick = window.connectWallet;
+}
+
+async function readCall(fn, args) {
+  const v = await reader.readContract({ address: CONTRACT, abi: ABI, functionName: fn, args });
+  return typeof v === 'string' ? JSON.parse(v) : v;
+}
+
+async function loadStats() {
+  try {
+    const d = await readCall('total_developers', []);
+    const r = await readCall('total_reviews', []);
+    document.getElementById('stDevs').textContent = String(d);
+    document.getElementById('stRevs').textContent = String(r);
+  } catch (e) { /* RPC lag */ }
+}
+
+async function loadProfile() {
+  if (!account) { document.getElementById('profileBody').innerHTML = '<div class="empty">Connect a wallet to view your reputation.</div>'; return; }
+  const addr = account.address;
+  try {
+    const rep = await readCall('get_reputation', [addr]);
+    if (!rep || !rep.exists) {
+      document.getElementById('profileBody').innerHTML = '<div class="empty">No reputation yet. Submit a contribution to get reviewed.</div>';
+      return;
+    }
+    document.getElementById('myScore').textContent = String(rep.score);
+    document.getElementById('myRank').innerHTML = '<span class="badge r-' + rep.rank + '">' + rep.rank + '</span>';
+    document.getElementById('profileBody').innerHTML =
+      '<div class="review"><div class="top"><div class="id">' + addr + '</div>' +
+      '<span class="badge r-' + rep.rank + '">' + rep.rank + '</span></div>' +
+      '<div class="meta">Score ' + rep.score + ' · Reviews ' + rep.reviews +
+      ' · Best ' + rep.best + ' · Avg ' + (rep.avg_x100 / 100).toFixed(2) + '</div></div>';
+  } catch (e) {
+    document.getElementById('profileBody').innerHTML = '<div class="empty">Could not load reputation.</div>';
+  }
+}
+
+window.submitReview = async function() {
+  const url = document.getElementById('inUrl').value.trim();
+  const id = document.getElementById('inId').value.trim();
+  const rubric = document.getElementById('inRubric').value;
+  if (!url || !id) return showMsg('submitMsg', 'Artifact URL and Review ID are required.', 'err');
+  if (!account) return showMsg('submitMsg', 'Connect your wallet first.', 'err');
+  const btn = document.getElementById('reviewBtn');
+  btn.disabled = true; btn.textContent = 'Submitting…';
+  showMsg('submitMsg', 'Submitting — validators are independently fetching and rating your work. This takes a minute.', 'info');
+  try {
+    const hash = await walletClient.writeContract({
+      address: CONTRACT, abi: ABI, functionName: 'review_contribution',
+      args: [id, url, rubric], value: 0n, fees: FEES,
+    });
+    showMsg('submitMsg', 'Submitted. Waiting for consensus…', 'info');
+    await walletClient.waitForTransactionReceipt({ hash, waitUntil: 'finalized', retries: 200 });
+    const rev = await readCall('get_review', [id]);
+    if (rev && rev.exists) {
+      showMsg('submitMsg', 'Reviewed! Rating: ' + rev.rating + '/5. Your profile has been updated.', 'ok');
+      loadStats(); loadProfile();
+    } else {
+      showMsg('submitMsg', 'Submitted, but no rating was recorded yet. Check back shortly.', 'info');
+    }
+  } catch (e) {
+    showMsg('submitMsg', 'Failed: ' + (e.shortMessage || e.message || e), 'err');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Submit for AI Review';
+  }
+};
+
+window.lookupDev = async function() {
+  const addr = document.getElementById('inLookup').value.trim();
+  if (!addr) return showMsg('lookupMsg', 'Enter a wallet address.', 'err');
+  try {
+    const rep = await readCall('get_reputation', [addr]);
+    document.getElementById('lookupCard').style.display = 'block';
+    if (!rep || !rep.exists) {
+      document.getElementById('lookupBody').innerHTML = '<div class="empty">No reputation for this address.</div>';
+      return;
+    }
+    document.getElementById('lookupBody').innerHTML =
+      '<div class="review"><div class="top"><div class="id">' + addr + '</div>' +
+      '<span class="badge r-' + rep.rank + '">' + rep.rank + '</span></div>' +
+      '<div class="meta">Score ' + rep.score + ' · Reviews ' + rep.reviews +
+      ' · Best ' + rep.best + ' · Avg ' + (rep.avg_x100 / 100).toFixed(2) + '</div></div>';
+    showMsg('lookupMsg', '', 'info');
+  } catch (e) {
+    showMsg('lookupMsg', 'Lookup failed: ' + (e.shortMessage || e.message || e), 'err');
+  }
+};
+
+function showMsg(id, text, kind) {
+  const el = document.getElementById(id);
+  el.className = 'msg ' + kind;
+  el.textContent = text;
+}
+
+document.getElementById('contractAddr').textContent = CONTRACT;
+loadStats();
+setInterval(loadStats, 15000);
+</script>
+</body>
+</html>
