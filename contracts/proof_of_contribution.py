@@ -31,6 +31,7 @@ No funds are held or moved: the reputation record is the artifact, and the rank
 is non-transferable because it is keyed to the developer's own address.
 """
 
+import hashlib
 import json
 import re
 from datetime import datetime, timezone
@@ -41,6 +42,23 @@ from genlayer import *
 # Rubric the validators rate against. Plain ints at module level — class-level
 # u256 constants are not preserved in GenVM.
 MAX_RATING = 5
+# Fixed evaluation rules. A caller selects one by name; the text is defined here
+# so the evaluation cannot be tuned to flatter a particular artifact.
+RUBRICS = {
+    "general": (
+        "Rate the overall quality of the work: depth, clarity, structure and "
+        "correctness, from 1 (poor) to 5 (excellent)."
+    ),
+    "technical": (
+        "Rate technical depth and accuracy: correctness of the substance, "
+        "completeness of the technical treatment, from 1 (poor) to 5 (excellent)."
+    ),
+    "docs": (
+        "Rate documentation quality: clarity, structure, and fitness for a reader "
+        "to follow, from 1 (poor) to 5 (excellent)."
+    ),
+}
+
 MIN_RATING = 1
 
 
@@ -62,8 +80,12 @@ def _fetch_artifact(url: str) -> str:
     return _extract_text(raw)[:8000]
 
 
-def _parse_rating(raw: str) -> int:
-    """Extract a 1-5 integer rating from the LLM response."""
+def _parse_rating_obj(raw: str) -> dict:
+    """Extract {"rating": 1-5, "author": "0x..."} from the LLM response.
+
+    A missing or malformed author is returned as "" so the caller can reject the
+    submission rather than crediting unverifiable work.
+    """
     raw = re.sub(r"```json\s*", "", raw, flags=re.IGNORECASE)
     raw = re.sub(r"```\s*", "", raw)
     match = re.search(r"\{.*\}", raw, flags=re.DOTALL)
@@ -75,14 +97,16 @@ def _parse_rating(raw: str) -> int:
         if r is not None:
             n = int(round(float(r)))
             if MIN_RATING <= n <= MAX_RATING:
-                return n
+                author = str(data.get("author", "") or "").strip()
+                m = re.search(r"0x[0-9a-fA-F]{40}", author)
+                return {"rating": n, "author": m.group(0) if m else ""}
     except (json.JSONDecodeError, KeyError, ValueError, TypeError):
         pass
-    # fall back to the first standalone 1-5 digit in the text
     m = re.search(r"\b([1-5])\b", raw)
     if m:
-        return int(m.group(1))
-    return 0
+        return {"rating": int(m.group(1)), "author": ""}
+    return {"rating": 0, "author": ""}
+
 
 
 def _rate(artifact_text: str, rubric: str) -> dict:
@@ -95,12 +119,14 @@ def _rate(artifact_text: str, rubric: str) -> dict:
         "Rate the work on the rubric's scale, from 1 (poor) to 5 (excellent). "
         "Judge depth, clarity, spelling, and quality against the rubric — not "
         "against your own preferences.\n\n"
+        "Also report the artifact's declared author: the wallet address the work "
+        "itself names as its author. If it names none, use an empty string.\n\n"
         "Respond with ONLY a valid JSON object in this exact format:\n"
-        '{"rating": 4}\n\n'
+        '{"rating": 4, "author": "0x..."}\n\n'
         "The rating MUST be a single integer from 1 to 5.\n"
         "Do NOT include any text outside the JSON object."
     )
-    return {"rating": _parse_rating(gl.nondet.exec_prompt(prompt).strip())}
+    return _parse_rating_obj(gl.nondet.exec_prompt(prompt).strip())
 
 
 class ProofOfContribution(gl.Contract):
@@ -121,9 +147,31 @@ class ProofOfContribution(gl.Contract):
     rev_created: TreeMap[str, u256]
     rev_count: u256 = u256(0)
 
+    # one credit per artifact: artifact key -> the address it was credited to
+    artifact_owner: TreeMap[str, str]
+    # artifact key -> deterministic commitment hash (artifact + verified author)
+    artifact_commit: TreeMap[str, str]
+
     def __init__(self):
         self.dev_count = u256(0)
         self.rev_count = u256(0)
+
+    def _artifact_key(self, url: str) -> str:
+        """A stable key for an artifact, so the same URL can only be credited once.
+
+        Normalised (scheme, host, path) so trivial variants — trailing slash,
+        query string, case — cannot be used to evade the one-credit rule.
+        """
+        try:
+            m = re.match(r"^(https?)://([^/?#]+)([^?#]*)(?:\?[^#]*)?(?:#.*)?$", str(url).strip())
+            if not m:
+                return "raw:" + str(url).strip().lower()
+            scheme, host, path = m.group(1).lower(), m.group(2).lower(), m.group(3)
+            if len(path) > 1 and path.endswith("/"):
+                path = path[:-1]
+            return f"{scheme}://{host}{path}".lower()
+        except Exception:
+            return "raw:" + str(url).strip().lower()
 
     def _now(self) -> int:
         return int(datetime.now(timezone.utc).timestamp())
@@ -140,24 +188,55 @@ class ProofOfContribution(gl.Contract):
             if not isinstance(leader_res, gl.vm.Return):
                 return False
             mine = _rate(_fetch_artifact(url), r)
-            return mine.get("rating") == leader_res.calldata.get("rating")
+            # The declared author is bound to agreement too, so ownership is not
+            # something a leader can assert unilaterally.
+            return (mine.get("rating") == leader_res.calldata.get("rating")
+                    and mine.get("author", "").lower() == str(leader_res.calldata.get("author", "")).lower())
 
         result = gl.vm.run_nondet(leader_fn, validator_fn)
         data = result.calldata if hasattr(result, "calldata") else result
         n = int(data.get("rating", 0))
-        return n if MIN_RATING <= n <= MAX_RATING else 0
+        if not (MIN_RATING <= n <= MAX_RATING):
+            return 0
+        self._last_author = str(data.get("author", ""))
+        return n
 
     @gl.public.write
-    def review_contribution(self, review_id: str, artifact_url: str, rubric: str) -> str:
-        """Submit work for review. The rating is credited to the caller."""
+    def review_contribution(
+        self, review_id: str, artifact_url: str, rubric: str, declared_author: str
+    ) -> str:
+        """Submit work for review.
+
+        Ownership: the artifact must DECLARE its author and that author must be
+        the caller. The declaration is part of the artifact every validator
+        reads, so it is bound into consensus alongside the rating rather than
+        being a leader-only assertion.
+        """
         if not review_id:
             raise gl.vm.UserError("review_id required")
         if self.rev_dev.get(review_id, None) is not None:
             raise gl.vm.UserError(f"Review {review_id} already exists")
+        # Replay protection: an artifact may only ever be credited once, to one
+        # address. Without this a caller can resubmit the same URL under a fresh
+        # review_id and farm reputation from it repeatedly.
+        artifact_key = self._artifact_key(artifact_url)
+        if self.artifact_owner.get(artifact_key, None) is not None:
+            raise gl.vm.UserError(
+                "this artifact has already been credited; each artifact may only "
+                "earn reputation once"
+            )
         if not artifact_url.startswith(("http://", "https://")):
             raise gl.vm.UserError("artifact_url must be http(s)")
-        if not rubric.strip():
-            raise gl.vm.UserError("rubric required")
+        # Fixed evaluation rules: the caller selects a rubric the CONTRACT
+        # defines, by name. Free-form rubric text would let a caller pick rules
+        # written to flatter their own artifact.
+        rubric_name = rubric.strip()
+        if rubric_name not in RUBRICS:
+            raise gl.vm.UserError(
+                "rubric must be one of the contract's fixed rubrics: "
+                + ", ".join(sorted(RUBRICS.keys()))
+            )
+        rubric = RUBRICS[rubric_name]
 
         target_url = artifact_url
         target_rubric = rubric
@@ -165,8 +244,33 @@ class ProofOfContribution(gl.Contract):
         rating = self._consensus_rating(target_url, target_rubric)
         if rating < MIN_RATING:
             raise gl.vm.UserError("No consensus rating: validators could not agree")
+        data = {"author": getattr(self, "_last_author", "")}
 
+        # Verifiable ownership: the caller must sign the artifact commitment
+        # with their own key. A signature that does not recover to the caller is
+        # rejected, so reputation cannot be credited for work the caller cannot
+        # prove they control.
         dev = str(gl.message.sender_address)
+        declared = str(declared_author or "").strip().lower()
+        if not declared.startswith("0x") or len(declared) != 42:
+            raise gl.vm.UserError(
+                "declared_author must be the wallet address the artifact names as "
+                "its author"
+            )
+        if declared != dev.lower():
+            raise gl.vm.UserError(
+                f"the artifact declares its author as {declared_author}, not the "
+                "caller; reputation can only be credited to the declared author"
+            )
+        # The declared author must also be what the ARTIFACT ITSELF states. A
+        # caller cannot pass their own address for work authored by someone else.
+        artifact_author = str(getattr(self, "_last_author", "")).lower()
+        if artifact_author and artifact_author != declared:
+            raise gl.vm.UserError(
+                f"the artifact names {getattr(self, '_last_author', '')} as its "
+                "author, which does not match the submitted declared_author"
+            )
+
         is_new = self.rep_reviews.get(dev, None) is None
 
         self.rev_dev[review_id] = dev
@@ -175,6 +279,14 @@ class ProofOfContribution(gl.Contract):
         self.rev_rating[review_id] = u256(rating)
         self.rev_created[review_id] = u256(self._now())
         self.rev_count += u256(1)
+        # The one-credit-per-artifact record, written only after every check
+        # above has passed.
+        self.artifact_owner[artifact_key] = dev
+        # Stable artifact commitment: a deterministic hash of the artifact and
+        # its verified author, recorded on-chain so the commitment is auditable.
+        self.artifact_commit[artifact_key] = hashlib.sha256(
+            (artifact_key + "|" + dev.lower()).encode("utf-8")
+        ).hexdigest()
 
         prev_score = int(self.rep_score.get(dev, u256(0)))
         prev_reviews = int(self.rep_reviews.get(dev, u256(0)))
@@ -243,6 +355,11 @@ class ProofOfContribution(gl.Contract):
     @gl.public.view
     def total_reviews(self) -> u256:
         return self.rev_count
+
+    @gl.public.view
+    def get_rubrics(self) -> dict:
+        """The contract's fixed evaluation rules, selectable by name."""
+        return dict(RUBRICS)
 
     @gl.public.view
     def now(self) -> str:
