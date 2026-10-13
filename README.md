@@ -1,6 +1,6 @@
 # ProofOfContribution — farming-resistant developer reputation
 
-**Contract:** [`0xc52A69cBeb9666648e39ad083b1135610b63928D`](https://explorer-bradbury.genlayer.com/address/0xc52A69cBeb9666648e39ad083b1135610b63928D) on GenLayer Bradbury Testnet (chain 4221)
+**Contract:** [**`0xc52A69cBeb9666648e39ad083b1135610b63928D`**](https://explorer-bradbury.genlayer.com/address/0xc52A69cBeb9666648e39ad083b1135610b63928D) on GenLayer Bradbury Testnet (chain 4221)
 **Deployed size:** 15,678 bytes — identical to `contracts/proof_of_contribution.py` in this repo.
 
 Developers earn non-transferable on-chain reputation from work an AI validator

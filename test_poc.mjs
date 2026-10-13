@@ -78,6 +78,11 @@ async function read(fn, args = []) {
   return typeof v === 'string' ? JSON.parse(v) : v;
 }
 
+// A substantial artifact: a real documentation page with depth and structure,
+// so validators can rate it at or above the quality floor. hello.html is trivial
+// and rates 1-2, which the floor correctly refuses.
+// A trivial artifact that must NOT earn reputation (below the floor).
+const JUNK = 'https://test-server.genlayer.com/static/genvm/hello.html';
 const BASE = 'https://test-server.genlayer.com/static/genvm/hello.html';
 const stamp = Date.now().toString().slice(-7);
 
